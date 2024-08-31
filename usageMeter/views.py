@@ -5,8 +5,6 @@ from uuid import uuid1
 from io import BytesIO
 
 from PIL import Image
-from django.contrib.messages import success
-from django.db.models.functions import Trunc
 
 from django.http import HttpResponse
 from dotenv import load_dotenv
@@ -39,14 +37,16 @@ def upload(request):
             measure_type = str.upper(params["measure_type"])
 
             # Ensure the measurement hasn't been taken for the month
-            if measure_datetime[0:7] in Measurement.objects.all().values(
-                    'measure_datetime')[0:7]:
-                res = {
-                    "error_code": "DOUBLE_REPORT",
-                    "error_description": "Reading has already been taken for the month."
-                }
+            for date in Measurement.objects.all().values('measure_datetime'):
+                if int(measure_datetime[5:7]) == int(date['measure_datetime'].month) and int(
+                        measure_datetime[0:4]) == int(
+                        date['measure_datetime'].year):
+                    res = {
+                        "error_code": "DOUBLE_REPORT",
+                        "error_description": "Reading has already been taken for the month."
+                    }
 
-                return HttpResponse(res, 409)
+                    return HttpResponse(json.dumps(res), 409)
 
             # Make sure the data types are correct
             for obj in (customer_code, measure_datetime, measure_type):
@@ -146,6 +146,7 @@ def confirm(request):
             measure_uuid = params["measure_uuid"]
             confirmed_value = params["confirmed_value"]
 
+            # Ensure the data types are correct
             assert isinstance(measure_uuid, str), "Invalid type: measure_uuid is not a String"
             assert isinstance(confirmed_value, int), "Invalid type: confirmed_value is not an Integer"
 
@@ -158,17 +159,21 @@ def confirm(request):
 
             return return_status_400(res)
 
-        measurement = Measurement.objects.get(measure_uuid=measure_uuid)
+        try:
+            # Get the measurement that matches the uuid
+            measurement = Measurement.objects.get(measure_uuid=measure_uuid)
 
-        if not measurement:
+        except Exception as e:
+            # Handle the error if no measurements are found
             res = {
                 "error_code":
                     "MEASURE_NOT_FOUND",
-                "error_description": f"No results matching uuid {measure_uuid} found in the database."
+                "error_description": f"No results matching uuid {measure_uuid} found in the database: {e}"
             }
 
             return HttpResponse(json.dumps(res), status=404)
 
+        # Check if the measurement has already been confirmed
         if measurement.has_confirmed:
             res = {
                 "error_code":
@@ -178,14 +183,17 @@ def confirm(request):
 
             return HttpResponse(json.dumps(res), status=409)
 
+        # If the values match, set has_confirmed to True
         if measurement.measure_value == confirmed_value:
             measurement.has_confirmed = True
             measurement.save()
 
+        # If not, update to new value
         else:
             measurement.measure_value = confirmed_value
             measurement.save()
 
+        # Return success
         res = {
             "success": True
         }
@@ -200,7 +208,7 @@ def list_measurements(request, customer_code):
     # Get the optional url parameter
     measure_type = request.GET.get('measure_type')
 
-    # If measure_type provided, ensure it's either "WATER or "GAS
+    # If measure_type provided, ensure it's either "WATER" or "GAS"
     if measure_type:
         if str.upper(measure_type) not in ["WATER", "GAS"]:
             res = {
@@ -211,7 +219,7 @@ def list_measurements(request, customer_code):
             return return_status_400(res)
 
         # Get the measurements
-        measurements = Measurement.objects.filter(customer_code=customer_code, measure_type=measure_type)
+        measurements = Measurement.objects.filter(customer_code=customer_code, measure_type=str.upper(measure_type))
     else:
         measurements = Measurement.objects.filter(customer_code=customer_code)
 
