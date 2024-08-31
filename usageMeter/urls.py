@@ -7,5 +7,6 @@ app_name = "usageMeter"
 urlpatterns = [
     path("", views.index, name="index"),
     path("upload/", views.upload, name="upload"),
+    path("confirm/", views.confirm, name="confirm"),
     path("<str:customer_code>/list", views.list_measurements, name="list_measurements")
 ]

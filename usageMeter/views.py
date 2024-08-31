@@ -5,6 +5,7 @@ from uuid import uuid1
 from io import BytesIO
 
 from PIL import Image
+from django.contrib.messages import success
 from django.db.models.functions import Trunc
 
 from django.http import HttpResponse
@@ -130,13 +131,76 @@ def upload(request):
 
         return HttpResponse(json.dumps(res))
 
-    # Prevent the server from crashing if someone doesn't use POST
-    return HttpResponse("This route only supports post requests.")
+    else:
+        # Prevent the server from crashing if someone doesn't use POST
+        return HttpResponse("This route only supports POST requests.")
+
+
+def confirm(request):
+    if request.method == "PATCH":
+        try:
+            # Get the JSON from request.body
+            params = get_json(request.body)
+
+            # Store the params in variables
+            measure_uuid = params["measure_uuid"]
+            confirmed_value = params["confirmed_value"]
+
+            assert isinstance(measure_uuid, str), "Invalid type: measure_uuid is not a String"
+            assert isinstance(confirmed_value, int), "Invalid type: confirmed_value is not an Integer"
+
+        except Exception as e:
+            # Return any errors
+            res = {
+                "error_code": "INVALID_DATA",
+                "error_description": f"The data provided in the body of the request is invalid: {e}",
+            }
+
+            return return_status_400(res)
+
+        measurement = Measurement.objects.get(measure_uuid=measure_uuid)
+
+        if not measurement:
+            res = {
+                "error_code":
+                    "MEASURE_NOT_FOUND",
+                "error_description": f"No results matching uuid {measure_uuid} found in the database."
+            }
+
+            return HttpResponse(json.dumps(res), status=404)
+
+        if measurement.has_confirmed:
+            res = {
+                "error_code":
+                    "CONFIRMATION_DUPLICATE",
+                "error_description": "Reading already confirmed"
+            }
+
+            return HttpResponse(json.dumps(res), status=409)
+
+        if measurement.measure_value == confirmed_value:
+            measurement.has_confirmed = True
+            measurement.save()
+
+        else:
+            measurement.measure_value = confirmed_value
+            measurement.save()
+
+        res = {
+            "success": True
+        }
+
+        return HttpResponse(json.dumps(res))
+    else:
+        # Prevent the server from crashing if someone doesn't use PATCH
+        return HttpResponse("This route only supports PATCH requests.")
 
 
 def list_measurements(request, customer_code):
+    # Get the optional url parameter
     measure_type = request.GET.get('measure_type')
 
+    # If measure_type provided, ensure it's either "WATER or "GAS
     if measure_type:
         if str.upper(measure_type) not in ["WATER", "GAS"]:
             res = {
@@ -146,15 +210,18 @@ def list_measurements(request, customer_code):
 
             return return_status_400(res)
 
+        # Get the measurements
         measurements = Measurement.objects.filter(customer_code=customer_code, measure_type=measure_type)
     else:
         measurements = Measurement.objects.filter(customer_code=customer_code)
 
+    # Initialize response to be filled in with list of measurements
     res = {
         "customer_code": customer_code,
         "measures": []
     }
 
+    # Fill in list of measurements with JSON
     for measurement in measurements:
         res["measures"] += {
             "measure_uuid": measurement.measure_uuid.__str__(),
@@ -164,6 +231,7 @@ def list_measurements(request, customer_code):
             "image_url": measurement.image_url
         },
 
+    # If there's no list, send a different response
     if measurements.count() == 0:
         res = {
             "error_code": "MEASURES_NOT_FOUND",
