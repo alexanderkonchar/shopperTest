@@ -10,3 +10,4 @@ class Measurement(models.Model):
     measure_type = models.CharField(max_length=64)
     measure_value = models.IntegerField()
     measure_uuid = models.UUIDField()
+    has_confirmed = models.BooleanField(default=False)

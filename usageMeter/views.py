@@ -15,12 +15,11 @@ from usageMeter.utils import decode_image, get_json, return_status_400
 
 # Load API key from .env
 load_dotenv()
-
 genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 
 
 def index(request):
-    return HttpResponse("Make a POST request to /upload/ to get started.")
+    return HttpResponse("Make a POST request to upload/ to get started.")
 
 
 def upload(request):
@@ -36,6 +35,7 @@ def upload(request):
             # Store the remaining params in variables
             customer_code = params["customer_code"]
             measure_datetime = params["measure_datetime"]
+            measure_type = str.upper(params["measure_type"])
 
             # Ensure the measurement hasn't been taken for the month
             if measure_datetime[0:7] in Measurement.objects.all().values(
@@ -47,14 +47,12 @@ def upload(request):
 
                 return HttpResponse(res, 409)
 
-            measure_type = params["measure_type"]
-
             # Make sure the data types are correct
             for obj in (customer_code, measure_datetime, measure_type):
                 assert isinstance(obj, str), "Invalid type: Not a String"
 
             # Make sure the measurement type is either "WATER" or "GAS"
-            if str.upper(measure_type) not in ["WATER", "GAS"]:
+            if measure_type not in ["WATER", "GAS"]:
                 raise Exception("Measurement type not allowed. Must be either WATER or GAS.")
         except Exception as e:
             # Return any errors
@@ -86,13 +84,14 @@ def upload(request):
 
             return return_status_400(res)
 
-        # Select a Gemini model, changing it to Pro crashes the server for some reason
+        # Select a Gemini model (Changing it to Pro crashes the server for some reason)
         model = genai.GenerativeModel(model_name="gemini-1.5-flash")
 
-        # Prompt the model with text and the previously uploaded image.
+        # Prompt the model with text and the previously uploaded image
         result = model.generate_content(
             [image, "Can you tell me what the reading on this meter says? Output just a number and nothing else."]).text
 
+        # Get the result as an integer
         try:
             measure_value = int(result)
         except Exception as e:
@@ -133,3 +132,44 @@ def upload(request):
 
     # Prevent the server from crashing if someone doesn't use POST
     return HttpResponse("This route only supports post requests.")
+
+
+def list_measurements(request, customer_code):
+    measure_type = request.GET.get('measure_type')
+
+    if measure_type:
+        if str.upper(measure_type) not in ["WATER", "GAS"]:
+            res = {
+                "error_code": "INVALID_TYPE",
+                "error_description": "Measurement type not allowed"
+            }
+
+            return return_status_400(res)
+
+        measurements = Measurement.objects.filter(customer_code=customer_code, measure_type=measure_type)
+    else:
+        measurements = Measurement.objects.filter(customer_code=customer_code)
+
+    res = {
+        "customer_code": customer_code,
+        "measures": []
+    }
+
+    for measurement in measurements:
+        res["measures"] += {
+            "measure_uuid": measurement.measure_uuid.__str__(),
+            "measure_datetime": measurement.measure_datetime.__str__(),
+            "measure_type": measurement.measure_type,
+            "has_confirmed": measurement.has_confirmed,
+            "image_url": measurement.image_url
+        },
+
+    if measurements.count() == 0:
+        res = {
+            "error_code": "MEASURES_NOT_FOUND",
+            "error_description": "No reading found"
+        }
+
+        return HttpResponse(json.dumps(res), status=404)
+
+    return HttpResponse(json.dumps(res))
